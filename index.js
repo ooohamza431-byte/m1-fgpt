@@ -27,7 +27,7 @@ async function askOverchat(question) {
         'X-Device-Version'  : '1.0.44',
         'X-Device-Language' : 'en-US',
         'X-Device-UUID'     : generateUUID(),
-        'User-Agent'        : 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        'User-Agent'        : 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36',
         'Origin'            : 'https://overchat.ai',
         'Referer'           : 'https://overchat.ai/'
     };
@@ -40,7 +40,7 @@ async function askOverchat(question) {
             { id: generateUUID(), role: "user",   content: question },
             { id: generateUUID(), role: "system", content: ""       }
         ],
-        stream           : false,
+        stream           : true,   // ← stream ON rakho, manually parse karenge
         temperature      : 0.5,
         top_p            : 0.95,
         max_tokens       : 4000,
@@ -48,15 +48,33 @@ async function askOverchat(question) {
         presence_penalty : 0
     };
 
-    const response = await axios.post(apiUrl, payload, { headers });
-    const reply = response.data?.choices?.[0]?.message?.content || "";
+    // Stream response ko text ki tarah lo
+    const response = await axios.post(apiUrl, payload, {
+        headers,
+        responseType: 'text'
+    });
+
+    // SSE lines parse karo
+    let fullReply = "";
+    const lines = response.data.split('\n');
+
+    for (const line of lines) {
+        if (!line.startsWith('data: ')) continue;
+        const raw = line.replace('data: ', '').trim();
+        if (raw === '[DONE]') continue;
+        try {
+            const json    = JSON.parse(raw);
+            const content = json.choices?.[0]?.delta?.content || "";
+            fullReply += content;
+        } catch (_) {}
+    }
 
     return {
         status : true,
         creator: 'M1 Hacks',
         channel: 'https://whatsapp.com/channel/0029Vb7bRaeAYlUTWchwPV44',
         model  : 'gpt-5.2-nano',
-        reply  : reply.trim()
+        reply  : fullReply.trim()
     };
 }
 
@@ -67,16 +85,15 @@ module.exports = async (req, res) => {
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
     if (req.method === 'OPTIONS') return res.status(200).end();
 
-    // Parse query params manually (Vercel fix)
+    // Parse query
     const parsed   = url.parse(req.url, true);
     const question = parsed.query.q || parsed.query.question || req.body?.q || req.body?.question;
 
-    // Home — no question provided
     if (!question) {
         return res.status(200).json({
             name   : 'M1 Hacks — Free GPT API',
             channel: 'https://whatsapp.com/channel/0029Vb7bRaeAYlUTWchwPV44',
-            usage  : '/api?q=your+question',
+            usage  : '?q=your+question',
             model  : 'gpt-5.2-nano',
             status : 'online ✅'
         });
